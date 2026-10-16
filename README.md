@@ -1,5 +1,41 @@
 # Reels feed collector
 
+## What's new in this branch (changes from the original `main`)
+
+This branch builds on the original collector and adds Mac support, screening-speed controls, and a keyboard-driven human-review toolchain. All new collector flags are optional; defaults reproduce the original behavior exactly.
+
+**Fixes**
+- `requirements.txt` now pins `av>=12,<16`. av 19 removed the `metadata_errors` parameter that faster-whisper 1.x passes to `av.open`, so every screening crashed with `TypeError` on fresh installs (reproduced on macOS, Python 3.13).
+- `--rescreen` now retries only items whose last attempt never produced a real result (`not_screened` or `screening_failed:*`), so an interrupted rescreen resumes without redoing finished work.
+
+**New collector flags**
+- `--channel msedge|chrome|chromium` — drive a real installed browser without automation markers (default msedge). Reduces Instagram login-verification loops; no bundled-browser download needed on machines that already have Edge or Chrome.
+- `--frame-interval SECONDS` — spacing between sampled frames (default 2.0, as before). Higher = faster screening, coarser coverage.
+- `--vision-batch N` — frames per vision-model call (default 1, as before). `0` sends the whole video in one call; the Ollama context window expands automatically to fit the batch.
+- `--speech-model NAME` — e.g. `base` for faster CPU transcription; language gates are unchanged.
+
+With `--frame-interval 5 --vision-batch 0 --speech-model base` on an Apple Silicon Mac, screening runs at roughly 1-2 minutes per 90-second item instead of 10-15.
+
+**New human-review toolchain (all local, no network uploads)**
+- `review_capture.py` — re-downloads review items once, re-samples frames at the original interval, and saves the frames the model flagged as uncertain plus up to 12 context frames as 320 px JPEGs under `review_frames/<shortcode>/`. Reuses the stored per-frame verdicts, so it makes no model calls; the downloaded video is deleted after extraction.
+- `review_gui.py` — local keyboard queue at http://127.0.0.1:8765: `g` approve, `w` reject, `r` choose a category (keys 1-12), `u` undo, arrow keys focus frames. Decisions write back to the SQLite store with an audit trail and regenerate every CSV plus analysis.html.
+- `review_download.py` — list items by status, download selected ones fully into `review_videos/`, and record verdicts from the command line (`--approve` / `--reject` / `--category`).
+
+**Repository hygiene**
+- Added `.gitignore` (browser session, venv, local datasets, frame evidence, downloaded videos).
+- The previously committed `instagram-session/` folder is removed from this branch's tip. **The login data still exists in the original main history — treat that account's session as compromised and log in again.**
+
+**Known issues left unchanged for discussion**
+- `decide()` accepts `no_speech_detected` audio, while the policy below says no-speech audio is held for review (`test_language_and_content_gates` documents the mismatch).
+- The original code sends one frame per vision call, not the six-frame batches described below.
+- `test_end_to_end_screen_success_and_failure` is stale (2 of 6 offline tests fail on a fresh checkout).
+
+**Mac notes**
+- If pip/brew/yt-dlp fail with connection errors to `127.0.0.1:10887`, dead proxy environment variables are the cause: unset `http_proxy` / `https_proxy` / `ALL_PROXY` (or prefix commands with `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy`).
+- Run one collector/rescreen at a time: Edge hands a second launch with the same profile to the existing instance and the new run fails silently.
+
+---
+
 Fresh standalone package for collecting general-interest Reels, screening English audio/text and political/sensitive content, and exporting Google Sheets-compatible CSVs and statistics.
 
 Extract this ZIP, open the english_reels_feed folder, and open PowerShell in that folder. No earlier scripts or updater are required. If desired, copy your existing instagram-session folder here to reuse your login; otherwise use the login command below.
@@ -58,7 +94,7 @@ Here --target counts NEW DISCOVERED Reels this run, not 1,000 passing candidates
 ## What the screener does
 
 - Audio is processed in 20-second chunks without forcing English. A confidently non-English speech chunk excludes the item. Uncertain language goes to review.
-- The vision model receives frames sampled about every two seconds, plus the caption and full detected transcript, in batches of six frames. It checks meaningful text language, political/sensitive content, general US English-speaking audience context, and dominant category.
+- The vision model receives frames sampled about every two seconds (configurable with `--frame-interval`), plus the caption and full detected transcript, one frame per call by default (configurable with `--vision-batch`; `0` sends the whole video in one call). It checks meaningful text language, political/sensitive content, general US English-speaking audience context, and dominant category.
 - Any predicted politics, specified sensitive content or meaningful non-English/mixed screen/caption text excludes the item.
 - All visual batches must be confident and clear to enter candidates.csv. Failed downloads, missing evidence, model errors and uncertainty go to needs_review.csv.
 - A silent file with no audio stream may pass visual checks. Audio with no detected speech (music, unintelligible speech or silence) is held for review: the model cannot prove that foreign lyrics/speech are absent.

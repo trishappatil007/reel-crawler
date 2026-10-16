@@ -1,0 +1,15 @@
+# Browser session with Instagram login — never commit
+instagram-session/
+# Local Python env
+.venv/
+__pycache__/
+# Collected datasets (feed_candidates*/ were committed upstream by mistake;
+# keep any NEW outputs local)
+feed_candidates/
+feed_candidates_new/
+feed_candidates_mine/
+# Frame evidence for human review (may contain third-party faces -- local only)
+review_frames/
+review_videos/
+# macOS
+.DS_Store
